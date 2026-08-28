@@ -1,0 +1,337 @@
+# postflight
+
+[![CI](https://github.com/ItsMrZxD/postflight/actions/workflows/ci.yml/badge.svg)](https://github.com/ItsMrZxD/postflight/actions/workflows/ci.yml)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
+A decoder and analyser for **Betaflight blackbox flight logs**, written in pure
+Python with **no dependencies at all** — not even NumPy.
+
+Every FPV quad running Betaflight can record a `.BBL` log to onboard flash: the
+gyro, every PID term, all four motor outputs, battery voltage and current, RC
+input, GPS, thousands of times a second. It is stored in a tight custom binary
+format designed for a flight controller with a few kilobytes of RAM to spare.
+This project reads that format from scratch and turns it into a flight report.
+Here it is on the log its own `demo` command generates, a 42 second flight that
+ends in a crash:
+
+```
+
+flight 1 of 1 · SynthQuad · Betaflight 4.4.0 (release) SYNTH · BTFL SYNTHF4
+────────────────────────────────────────────────────────────────
+  duration       42.0 s
+  loop rate      1000 Hz flight controller, 1000 Hz logged
+  frames         3 E, 210 G, 1 H, 1313 I, 40687 P, 165 S
+  coverage       42000 of 42000 iterations logged (0.00% dropped)
+
+  motor output   mean 40%  peak 92%  ██████░░░░░░░░░░
+  motors         peak 100% / 96% / 92% / 92%
+  battery        16.77 V → 12.79 V  (4S, min 3.20 V/cell)
+  current        peak 47.1 A, 174 mAh used
+  receiver       RSSI low point 120
+  gyro           peak 1896 / 1998 / 1861 deg/s
+  gyro rms       184 / 101 / 104 deg/s (whole signal, not filtered noise)
+  accelerometer  peak 19.1 g
+  gps            11 satellites, max 25 km/h, 453 m from home
+
+motor out  ▁▆▅▆▆▆▆▄▄▅▆▆▆▅▆▆▄▄▅▇▇▅▄▆▆▄▃▅▇█▅▄▆▆▅▃▅██▄▃▁▁▁▁▁▁▁▁▁▁▁  0.00..0.92
+voltage    █▇▇▇▇▆▆▇▇▆▆▆▆▆▅▅▅▅▅▄▄▄▅▄▄▄▄▄▃▃▃▃▃▃▃▃▂▂▁▂▂▂▂▂▂▂▂▂▁▁▁▁  12.8V..16.8V
+current    ▁▆▅▅▅▆▅▃▃▅▆▆▅▄▅▅▃▃▄▆▇▄▃▅▅▃▂▄▇█▄▃▅▅▄▂▄██▃▂▁▁▁▁▁▁▁▁▁▁▁  0.72A..46.9A
+gyro       ▁▂▁▂▂▂▂▁▁▂▂▂▂▂▂▂▁▁▂▂▂▂▁▂▂▁▁▁▂▂▁▁▂▂▂▁▁▂▂▁█▂▁▁▁▁▁▁▁▁▁▁  9.51..1844
+
+events
+     0.000 s  syncBeep
+     0.000 s  flightMode   ARM, ANGLE
+    41.999 s  disarm       SWITCH
+
+warnings
+  ⚠ rx-loss: receiver dropped out: failsafe phase RX_LOSS_DETECTED, no signal, flight channels invalid
+  ⚠ low-rssi: RSSI fell to 147/1023 for over 100 ms at t=16.90s
+  ⚠ impact: 11.7 g with 1647 deg/s rotation at t=32.76s -- looks like an impact
+  ⚠ voltage-sag: pack sagged to 3.20 V/cell (12.79 V on 4S), below the 3.30 V limit
+  ⚠ gyro-clipping: 3 gyro samples railed against the sensor limit
+```
+
+## Try it in ten seconds
+
+No flight controller required — the tool can generate a log to read:
+
+```bash
+git clone https://github.com/ItsMrZxD/postflight
+cd postflight
+python -m postflight demo -o flight.bbl --gps --crash --rx-glitch
+python -m postflight stats flight.bbl
+```
+
+With a real log, copy the `.BBL` off the quad (Betaflight Configurator, the
+Blackbox tab) and point the tool at it the same way.
+
+Optionally install it to get a `postflight` command on your PATH:
+
+```bash
+pip install .
+```
+
+## Commands
+
+| Command | What it does |
+| --- | --- |
+| `postflight info LOG.BBL` | Header of every flight in the file: firmware, board, rates, battery reference, field list |
+| `postflight stats LOG.BBL` | The flight report above. `--json` for machine-readable, `--no-charts` to drop the sparklines |
+| `postflight events LOG.BBL` | Arming, mode changes, disarm reason, sync beeps, in flight order |
+| `postflight csv LOG.BBL` | Decoded frames as CSV. `--fields time,motor[0]` to pick columns, `--frame G` for GPS |
+| `postflight demo` | Write a synthetic log, optionally with a crash, an RX dropout or deliberate corruption |
+
+Reads Data version 1 and 2 logs. Tested against Betaflight 4.2.0, 4.2.8 and
+4.2.11 recordings and the 4.4-style headers the demo generator writes.
+
+A single `.BBL` off a quad usually holds **several flights** — the firmware
+appends one session per arm/disarm cycle. Every command handles that; use
+`--session N` to pick one.
+
+## What it warns about
+
+Each rule says what it looked at, and the thresholds live in one class
+(`postflight/stats.py`, `Thresholds`) so they can be argued with.
+
+| Warning | Trigger |
+| --- | --- |
+| `impact` | High g reading and a high rotation rate at the same moment |
+| `motor-saturation` | All motors pinned above 97% for 50 ms — the quad had no authority left |
+| `motor-imbalance` | One motor working noticeably harder than the others all flight — bent shaft, unbalanced prop, soft mount |
+| `voltage-sag` | Pack fell below 3.30 V per cell |
+| `rx-loss` / `low-rssi` | Failsafe phase, invalid channels, or RSSI on the floor |
+| `gyro-clipping` | Gyro samples railed against the sensor limit |
+| `logging-dropouts` | Loop iterations missing because the flash could not keep up |
+| `corruption` | Frames the decoder had to skip, and how many bytes were lost |
+| `unexpected-disarm` | The flight controller disarmed itself (failsafe, crash protection, runaway takeoff) |
+| `truncated` | No end-of-log marker — power cut mid-write |
+
+## As a library
+
+```python
+from postflight import read_log
+
+for session in read_log("LOG00001.BBL"):
+    stats = session.stats()
+    print(session.header.craft_name, "%.1f s" % stats.duration_s)
+    for warning in stats.anomalies:
+        print(" ", warning["code"], warning["detail"])
+
+    # Frames are produced lazily, so decoding does not build a second copy of
+    # the flight in memory. The file itself is read whole -- see Limitations.
+    for frame in session.main_frames():
+        if frame["gyroADC[0]"] > 2000:
+            print("spike at", frame["time"])
+```
+
+## How the format works
+
+This is the interesting part, and the reason the project exists.
+
+**The header** is plain ASCII: `H key:value` lines that end where the binary
+starts. Besides the craft name and firmware version it carries the *field
+definitions* — for each frame type, the name, signedness, predictor and
+encoding of every column. Without them the payload is undecodable, which is
+why a bad header is fatal here while a bad frame is not.
+
+**Frames** each begin with a type byte:
+
+| Type | Meaning |
+| --- | --- |
+| `I` | Intra frame — every field stored absolutely. Written at the interval in the header (`I interval`, 256 in the real logs tested) as a resynchronisation point |
+| `P` | Inter frame — the common case, stored as a difference from a prediction |
+| `S` | Slow frame — flight mode flags, failsafe phase, RX state |
+| `G` / `H` | GPS fix and GPS home position |
+| `E` | Event — arming, mode change, disarm reason, end of log |
+
+**Prediction** is where the compression comes from. Almost nothing is stored
+as its own value. Instead the firmware subtracts a guess and stores only the
+error, which is usually small enough to fit in a byte or two:
+
+| Predictor | Guess |
+| --- | --- |
+| `PREVIOUS` | the same field in the last frame |
+| `STRAIGHT_LINE` | twice the previous value minus the one before it — for values changing at a steady rate, like the timestamp |
+| `AVERAGE_2` | the mean of the last two, which smooths noisy sensors |
+| `INCREMENT` | the previous value plus one, plus any intentionally skipped frames |
+| `MOTOR_0` | motor 0 of the same frame — the other three motors track it closely |
+| `MINTHROTTLE` / `MINMOTOR` / `1500` / `VBATREF` | fixed reference points from the header |
+| `HOME_COORD` / `LAST_MAIN_FRAME_TIME` | the GPS home position, or the timestamp of the last main frame |
+
+Decoding means re-adding those predictions with exactly the arithmetic the
+firmware used — including 32-bit wraparound and C's truncating division, both
+of which are wrong by default in Python.
+
+**Encodings** then pack the residuals. `SIGNED_VB` zig-zags a signed integer
+so that −1 becomes 1 and stores it as a base-128 varint. `TAG2_3S32` packs
+three values behind a two-bit selector that says whether they need 2, 4, 6 bits
+or a full 8/16/24/32 each. `TAG8_8SVB` puts eight values behind a bitmap of
+which ones are non-zero, so an idle axis costs one bit. `TAG8_4S16` packs four
+values as nibbles, which means a field can start halfway through a byte and the
+reader has to carry the leftover nibble forward.
+
+**Corruption is normal.** These logs are written to dataflash on a vehicle that
+gets crashed, and the write path drops bytes when its buffer overruns. A bad
+byte can desynchronise everything after it. So each frame is sanity-checked —
+time and loop iteration must move forward, and not by an implausible amount —
+and when a frame fails, the decoder scans ahead for the next intra frame,
+verifies it decodes cleanly, and carries on from there. Recovery costs at most
+one intra-frame interval of data, and the report says how much was skipped:
+
+```
+  corruption     10 bad frames, 4228 bytes skipped, 10 resyncs
+```
+
+That covers damage which breaks the frame structure. Damage that leaves a
+frame syntactically valid cannot be detected at all — see
+[Limitations](#limitations).
+
+## Accuracy
+
+Worth being straight about what has and has not been verified:
+
+- The **encodings** are pinned to the format by golden-byte tests — known
+  values encode to specific bytes, and specific bytes decode to known values.
+- The **predictors** are pinned by a fixture log built byte by byte in
+  `tests/test_decoder.py`, with every expected value worked out by hand.
+- The **round-trip** tests generate a flight, encode it, decode it and compare
+  all 28 fields of every frame. That exercises each encoding and predictor, but
+  since both directions are written here it proves self-consistency rather than
+  agreement with Betaflight.
+- It has been **checked against real logs off real flight controllers** —
+  Betaflight 4.2.0, 4.2.8 and 4.2.11 on three different boards (ZEEZ F7 V2,
+  AIKON F7, an STM32F745 target), 4S and 6S, logging at 8 kHz with 34 to 42
+  fields. The largest single session decoded 72,455 frames with **zero corrupt
+  frames and no resynchronisations**, and a deliberately damaged log recovered
+  as designed. Sample logs came from the test data of
+  [ilya-epifanov/fc-blackbox](https://github.com/ilya-epifanov/fc-blackbox) and
+  [blackbox-log/blackbox-log](https://github.com/blackbox-log/blackbox-log).
+
+That last step was worth doing, and it is the honest argument for never
+trusting a self-consistent test suite on its own. The synthetic round-trips all
+passed while two real bugs sat in the code, both in how the header is
+*interpreted* rather than how bytes are decoded:
+
+- Betaflight 4.2 writes the logging rate as a bare `P interval:16`, not the
+  `1/16` form. Parsing it as 1/1 meant the loop counter advanced by one instead
+  of sixteen, and every genuine log reported ~94% of its frames dropped.
+- Real logs carry `gyro_scale:0x3f800000`, which is the float 1.0, because the
+  firmware converts to deg/s before logging. A plausibility check rejected 1.0
+  as suspicious and fell back to a raw-count scale, reporting every gyro figure
+  16.4 times too small.
+
+Both are fixed and have regression tests. Neither was reachable from synthetic
+data, because the generator and the decoder shared the same wrong assumption.
+
+A later forensic audit, and the fixes that came out of it, are described in
+[Limitations](#limitations) below. The one that mattered most: a stray
+`0x45 0xFF` byte pair used to be accepted as the end of the log, so damaged
+data could silently cut a flight in half while the report showed no warnings
+at all. The end marker is now verified against the literal `"End of log"` the
+firmware writes, and the case is pinned by a regression test.
+
+## What is verified against Betaflight
+
+Claims here are checked against the firmware and reference decoder sources,
+not assumed:
+
+| Behaviour | Source |
+| --- | --- |
+| Field encodings and predictors | `blackbox_fielddefs.h` enums |
+| `TAG8_4S16` v1 and v2 layouts | `decoders.c` in blackbox-tools; both implemented, selected by `Data version` |
+| End-of-log marker | `blackbox.c` writes `"End of log"` + NUL; `parser.c` verifies it |
+| Timestamp rollover | `parser.c` `flightLogDetectAndApplyTimestampRollover` |
+| Cell count | `battery.c` `autoDetectCellCount`: `volts / vbatmaxcellvoltage + 1` |
+| Voltage in hundredths of a volt | `getBatteryVoltageLatest()`; confirmed on 4S and 6S real logs |
+| Current in hundredths of an amp | `getAmperageLatest()` — already scaled by the firmware, so the `currentSensor` header is not applied |
+| RSSI full scale 1023 | `RSSI_MAX_VALUE` in `rx.h` |
+| Gyro already in deg/s | `blackbox.c` writes `gyro_scale` as the float 1.0 |
+| The six event types emitted | the `blackboxLogEvent` switch |
+
+## Limitations
+
+Things this does not do, stated plainly:
+
+- **Not all corruption is detectable, and the decoder cannot warn about the
+  part that is not.** The blackbox format carries no checksum or CRC over
+  frame values. Fields are stored as variable-length integers, so a damaged
+  byte often still parses as a well-formed value: the frame stays
+  syntactically valid, passes the timestamp and loop-counter checks, and is
+  returned as ordinary data. Damage that *does* break framing is caught and
+  reported; damage that does not is invisible to any decoder reading this
+  format, including Betaflight's own.
+
+  Because inter frames store differences against previous values, one
+  undetected bad byte can carry into later frames until the next intra frame
+  restores absolute values — up to one intra-frame interval, which is 256
+  frames on the logs tested here.
+
+  The practical consequence for crash analysis: a `corruption` warning tells
+  you damage was found and how much was skipped, but the absence of one is not
+  proof that every value is faithful. If a log reports corruption anywhere,
+  treat fine detail elsewhere in it with some caution — particularly a single
+  outlying sample — and lean on trends across many frames, which a localised
+  error cannot fake. This concerns logs that were physically damaged; a log
+  the flight controller wrote intact decodes to exactly what it recorded.
+
+- **Encoding 10 (`TAG2_3SVARIABLE`) is rejected, not decoded.** It exists in
+  Betaflight's enum but no field uses it and blackbox-tools does not implement
+  it, so there is no reference to verify a layout against. A log using it gets
+  a clear error rather than plausible, wrong numbers. No real log tested uses
+  it.
+- **Unknown event types are treated as corruption.** Betaflight emits exactly
+  six kinds of event and all six are decoded. The reference decoder assumes an
+  unrecognised event has no payload and keeps reading, which can desynchronise
+  the stream; this decoder resynchronises on a verified intra frame instead,
+  which costs data but cannot silently misread it.
+- **The whole file is read into memory**, and each session is copied out of it,
+  so peak memory is roughly twice the file size. Frames themselves stream. A
+  16 MB log is fine; this is not built for arbitrarily large files.
+- **Flight mode names depend on a `boxId` order that shifts between firmware
+  versions.** Treat them as a hint.
+- **`--vbat-adc`** switches to the Cleanflight raw-ADC voltage formula for
+  pre-4.x logs. There is no equivalent for current.
+- **Cell count from a discharged pack is ambiguous.** 19.8 V is a flat 6S and
+  a healthy 5S. The header's plug-in reference voltage resolves it; without
+  that header the count can be one cell low, exactly as it can on the quad.
+- **Resynchronisation has no lookahead.** A candidate intra frame is accepted
+  on monotonic time and bounded jumps alone, where the reference also validates
+  the frame after it. No mis-resynchronisation was observed in testing —
+  corrupted logs lost frames but never returned wrong values for the frames
+  they did return — but it is a weaker guard than the reference's.
+- **Impact detection is a heuristic** (6 g together with 900 deg/s). Hard
+  freestyle can reach both. Treat it as a prompt to look, not a verdict.
+
+## Tests
+
+```bash
+python -m unittest discover -s tests -t . -v
+```
+
+182 tests, no dependencies. CI runs them on Ubuntu and Windows across Python
+3.9, 3.11 and 3.13, plus a `ruff` lint pass and an end-to-end CLI smoke test.
+
+Tests that carry independent ground truth -- golden bytes taken from the
+Betaflight sources, and logs assembled by hand with expected values worked out
+on paper -- are marked as such in their docstrings. The rest round-trip through
+`synth.py`, which shares its understanding of the format with the decoder and
+so cannot catch a shared wrong assumption. That distinction is not academic:
+every bug found in this project so far slipped past the round-trip tests.
+
+## Layout
+
+```
+postflight/
+  encoding.py   variable-length integer codecs, both directions
+  header.py     the ASCII header block and field definitions
+  decoder.py    the frame loop: predictors, validation, resynchronisation
+  stats.py      one streaming pass for flight statistics and warnings
+  sparkline.py  terminal charts, with an ASCII fallback for legacy consoles
+  synth.py      a flight model and encoder, for the tests and `postflight demo`
+  cli.py        the postflight command
+```
+
+## License
+
+MIT — see [LICENSE](LICENSE).

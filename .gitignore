@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# Tooling
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Logs produced by `bbparse demo` or copied off a quad
+*.bbl
+*.bfl
+*.BBL
+*.BFL
+demo.csv
