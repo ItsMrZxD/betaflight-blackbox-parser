@@ -1,11 +1,11 @@
-# postflight
+# betaflight-blackbox-parser
 
-[![CI](https://github.com/ItsMrZxD/postflight/actions/workflows/ci.yml/badge.svg)](https://github.com/ItsMrZxD/postflight/actions/workflows/ci.yml)
+[![CI](https://github.com/ItsMrZxD/betaflight-blackbox-parser/actions/workflows/ci.yml/badge.svg)](https://github.com/ItsMrZxD/betaflight-blackbox-parser/actions/workflows/ci.yml)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 A decoder and analyser for **Betaflight blackbox flight logs**, written in pure
-Python with no dependencies.
+Python with no dependencies. The package and its command are called `postflight`.
 
 Every FPV quad running Betaflight can record a `.BBL` log to onboard flash: the
 gyro, every PID term, all four motor outputs, battery voltage and current, RC
@@ -18,8 +18,8 @@ This project reads that format from scratch and turns it into a flight report.
 No flight controller is needed. The tool can generate a log to read:
 
 ```bash
-git clone https://github.com/ItsMrZxD/postflight
-cd postflight
+git clone https://github.com/ItsMrZxD/betaflight-blackbox-parser
+cd betaflight-blackbox-parser
 python -m postflight demo -o flight.bbl --gps --crash --rx-glitch
 python -m postflight stats flight.bbl
 ```
